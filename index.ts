@@ -4,7 +4,7 @@ import { runOAuthFlow } from "./oauth.js";
 import { createTools } from "./tools.js";
 
 export default {
-  id: "agentsandbox",
+  id: "openclaw-agentsandbox",
   name: "Agent Sandbox",
   description: "Execute Python and Bash code in a sandboxed environment via the Agent Sandbox API",
   configSchema: emptyPluginConfigSchema(),

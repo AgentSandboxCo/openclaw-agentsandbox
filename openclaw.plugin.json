@@ -1,5 +1,5 @@
 {
-  "id": "agentsandbox",
+  "id": "openclaw-agentsandbox",
   "providers": ["agentsandbox"],
   "configSchema": {
     "type": "object",
