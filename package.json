@@ -2,15 +2,31 @@
   "name": "@agentsandbox/openclaw-agentsandbox",
   "version": "1.0.0",
   "type": "module",
+  "description": "OpenClaw plugin for Agent Sandbox — execute Python and Bash code in sandboxed environments",
+  "main": "dist/index.js",
+  "files": [
+    "dist",
+    "openclaw.plugin.json"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "prepublishOnly": "npm run build"
+  },
   "dependencies": {
     "@sinclair/typebox": "^0.34.0"
   },
+  "peerDependencies": {
+    "openclaw": "*"
+  },
   "devDependencies": {
     "@types/node": "^22.0.0",
-    "openclaw": "workspace:*",
+    "openclaw": "*",
     "typescript": "^5.0.0"
   },
   "openclaw": {
-    "extensions": ["./index.ts"]
+    "extensions": ["./dist/index.js"]
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }

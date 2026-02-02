@@ -5,7 +5,7 @@ import path from "node:path";
 import { refreshAccessToken } from "./oauth.js";
 
 const BASE_URL =
-  "https://agentsandbox-api-870094711355.us-central1.run.app";
+  "https://api.agentsandbox.co";
 
 const MAX_OUTPUT_CHARS = 50_000;
 

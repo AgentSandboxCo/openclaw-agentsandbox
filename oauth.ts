@@ -2,7 +2,7 @@ import http from "node:http";
 import crypto from "node:crypto";
 
 const BASE_URL =
-  "https://agent-sandbox-api-870094711355.us-central1.run.app";
+  "https://api.agentsandbox.co";
 const CLIENT_ID = "openclaw-plugin-client";
 const CALLBACK_PORT = 51199;
 const REDIRECT_URI = `http://localhost:${CALLBACK_PORT}/callback`;
