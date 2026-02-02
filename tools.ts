@@ -121,6 +121,7 @@ export function createTools(ctx: ToolCtx) {
     // ── sandbox_execute ──────────────────────────────────────────
     {
       name: "sandbox_execute",
+      label: "Execute Code in Sandbox",
       description:
         "Execute Python or Bash code in a sandboxed environment. Returns stdout, stderr, return code, and any output files.",
       parameters: Type.Object({
@@ -181,6 +182,13 @@ export function createTools(ctx: ToolCtx) {
 
         return {
           content: [{ type: "text" as const, text: truncate(parts.join("\n\n")) }],
+          details: {
+            ok: data.return_code === 0,
+            language: params.language,
+            return_code: data.return_code,
+            session_id: data.session_id,
+            files: data.files,
+          },
         };
       },
     },
@@ -188,6 +196,7 @@ export function createTools(ctx: ToolCtx) {
     // ── sandbox_create_session ───────────────────────────────────
     {
       name: "sandbox_create_session",
+      label: "Create Sandbox Session",
       description:
         "Create a persistent sandbox session. Use the returned session_id with sandbox_execute to preserve filesystem state and installed packages across executions.",
       parameters: Type.Object({
@@ -211,6 +220,7 @@ export function createTools(ctx: ToolCtx) {
           content: [
             { type: "text" as const, text: JSON.stringify(data, null, 2) },
           ],
+          details: { ok: true, ...(data as object) },
         };
       },
     },
@@ -218,6 +228,7 @@ export function createTools(ctx: ToolCtx) {
     // ── sandbox_list_sessions ────────────────────────────────────
     {
       name: "sandbox_list_sessions",
+      label: "List Sandbox Sessions",
       description: "List all active sandbox sessions.",
       parameters: Type.Object({}),
       async execute() {
@@ -227,6 +238,7 @@ export function createTools(ctx: ToolCtx) {
           content: [
             { type: "text" as const, text: JSON.stringify(data, null, 2) },
           ],
+          details: { ok: true, ...(data as object) },
         };
       },
     },
@@ -234,6 +246,7 @@ export function createTools(ctx: ToolCtx) {
     // ── sandbox_destroy_session ──────────────────────────────────
     {
       name: "sandbox_destroy_session",
+      label: "Destroy Sandbox Session",
       description:
         "Destroy a sandbox session and terminate its sandbox. The session_id will no longer be usable.",
       parameters: Type.Object({
@@ -252,6 +265,7 @@ export function createTools(ctx: ToolCtx) {
           content: [
             { type: "text" as const, text: JSON.stringify(data, null, 2) },
           ],
+          details: { ok: true, session_id: params.session_id, ...(data as object) },
         };
       },
     },
@@ -259,6 +273,7 @@ export function createTools(ctx: ToolCtx) {
     // ── sandbox_download_file ────────────────────────────────────
     {
       name: "sandbox_download_file",
+      label: "Download Sandbox File",
       description:
         "Download an output file produced by a sandbox execution. Use the file_id from the sandbox_execute response.",
       parameters: Type.Object({
@@ -277,6 +292,7 @@ export function createTools(ctx: ToolCtx) {
           typeof data === "string" ? data : JSON.stringify(data, null, 2);
         return {
           content: [{ type: "text" as const, text: truncate(text) }],
+          details: { ok: true, file_id: params.file_id },
         };
       },
     },
