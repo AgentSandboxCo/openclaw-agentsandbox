@@ -1,0 +1,16 @@
+{
+  "name": "@agentsandbox/openclaw-agentsandbox",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@sinclair/typebox": "^0.34.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openclaw": "workspace:*",
+    "typescript": "^5.0.0"
+  },
+  "openclaw": {
+    "extensions": ["./index.ts"]
+  }
+}

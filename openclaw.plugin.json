@@ -1,0 +1,9 @@
+{
+  "id": "agentsandbox",
+  "providers": ["agentsandbox"],
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  }
+}
