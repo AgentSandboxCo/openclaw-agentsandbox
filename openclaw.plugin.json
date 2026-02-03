@@ -1,6 +1,7 @@
 {
   "id": "openclaw-agentsandbox",
   "providers": ["agentsandbox"],
+  "extensions": ["./dist/index.js"],
   "configSchema": {
     "type": "object",
     "additionalProperties": false,

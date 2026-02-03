@@ -15,13 +15,19 @@ type ToolCtx = {
 };
 
 async function getToken(ctx: ToolCtx): Promise<string> {
+  // 0. Check env var (declared in provider's envVars)
+  const envKey = process.env.SANDBOX_API_KEY?.trim();
+  if (envKey) {
+    return envKey;
+  }
+
   const profileId = Object.entries(ctx.config?.auth?.profiles ?? {}).find(
     ([, profile]) => profile?.provider === "agentsandbox",
   )?.[0];
 
   if (!profileId) {
     throw new Error(
-      "No auth profile for agentsandbox. Run: openclaw models auth login --provider agentsandbox",
+      "No auth profile for agentsandbox. Tell the user to run `openclaw models auth login --provider agentsandbox` in their terminal, or set the SANDBOX_API_KEY environment variable. Do NOT attempt the OAuth flow in this conversation — it requires a separate CLI command.",
     );
   }
   if (!ctx.agentDir) {
@@ -47,7 +53,7 @@ async function getToken(ctx: ToolCtx): Promise<string> {
   const cred = store.profiles?.[profileId];
   if (!cred) {
     throw new Error(
-      `Missing credential for profile ${profileId}. Re-authenticate with: openclaw models auth login --provider agentsandbox`,
+      `Missing credential for profile ${profileId}. Tell the user to run \`openclaw models auth login --provider agentsandbox\` in their terminal to re-authenticate. Do NOT attempt the OAuth flow in this conversation.`,
     );
   }
 
@@ -74,7 +80,7 @@ async function getToken(ctx: ToolCtx): Promise<string> {
   }
 
   throw new Error(
-    "All tokens expired and no refresh token available. Re-authenticate with: openclaw models auth login --provider agentsandbox",
+    "All tokens expired and no refresh token available. Tell the user to run `openclaw models auth login --provider agentsandbox` in their terminal to re-authenticate. Do NOT attempt the OAuth flow in this conversation.",
   );
 }
 
