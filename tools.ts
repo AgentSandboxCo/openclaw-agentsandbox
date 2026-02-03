@@ -108,8 +108,12 @@ async function apiRequest(
     throw new Error(`API ${method} ${endpoint} failed (${res.status}): ${errText}`);
   }
 
+  // Handle empty responses (e.g. 204 No Content)
+  if (res.status === 204) return {};
+
   if (contentType.includes("application/json")) {
-    return res.json();
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
   }
   return res.text();
 }
@@ -262,17 +266,42 @@ export function createTools(ctx: ToolCtx) {
       }),
       async execute(_id: string, params: { session_id: string }) {
         const token = await getToken(ctx);
-        const data = await apiRequest(
-          "DELETE",
-          `/v1/sessions/${encodeURIComponent(params.session_id)}`,
-          token,
-        );
-        return {
-          content: [
-            { type: "text" as const, text: JSON.stringify(data, null, 2) },
-          ],
-          details: { ok: true, session_id: params.session_id, ...(data as object) },
-        };
+        const endpoint = `/v1/sessions/${encodeURIComponent(params.session_id)}`;
+        const maxAttempts = 3;
+        let lastError: Error | undefined;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const data = await apiRequest("DELETE", endpoint, token);
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(data, null, 2) },
+              ],
+              details: { ok: true, session_id: params.session_id, ...(data as object) },
+            };
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+
+            // 404 means the session is already gone — treat as success
+            if (lastError.message.includes("(404)")) {
+              return {
+                content: [
+                  { type: "text" as const, text: "Session destroyed (already absent)." },
+                ],
+                details: { ok: true, session_id: params.session_id, already_gone: true },
+              };
+            }
+
+            // Only retry on transient errors (5xx, 429, network/parse issues)
+            const statusMatch = lastError.message.match(/\((\d{3})\)/);
+            const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+            const isRetryable = status >= 500 || status === 429 || !statusMatch;
+            if (!isRetryable || attempt === maxAttempts) throw lastError;
+
+            await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+          }
+        }
+        throw lastError;
       },
     },
 
