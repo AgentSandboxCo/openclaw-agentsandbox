@@ -196,6 +196,11 @@ export function createTools(ctx: ToolCtx) {
             description: "Environment variables to inject",
           }),
         ),
+        file_ids: Type.Optional(
+          Type.Array(Type.String(), {
+            description: "List of file IDs to inject into /workspace before execution",
+          }),
+        ),
       }),
       async execute(
         _id: string,
@@ -204,6 +209,7 @@ export function createTools(ctx: ToolCtx) {
           code: string;
           session_id?: string;
           env_vars?: Record<string, string>;
+          file_ids?: string[];
         },
       ) {
         const token = await getToken(ctx);
@@ -213,6 +219,7 @@ export function createTools(ctx: ToolCtx) {
         };
         if (params.session_id) body.session_id = params.session_id;
         if (params.env_vars) body.env_vars = params.env_vars;
+        if (params.file_ids) body.file_ids = params.file_ids;
 
         const data = (await apiRequest("POST", "/v1/execute", token, body)) as {
           session_id?: string;
@@ -603,20 +610,40 @@ export function createTools(ctx: ToolCtx) {
           `/v1/executions/${encodeURIComponent(params.execution_id)}`,
           token,
         )) as {
-          execution_id?: string;
-          stdout?: string;
-          stderr?: string;
-          return_code?: number;
-          status?: string;
+          id: string;
+          endpoint?: string;
+          method?: string;
+          status_code?: number | null;
+          duration_ms?: number | null;
+          session_id?: string | null;
+          language?: string | null;
+          code?: string | null;
+          stdout?: string | null;
+          stderr?: string | null;
+          return_code?: number | null;
+          files_count?: number;
+          error?: string | null;
+          request_meta?: Record<string, unknown> | null;
+          created_at?: string;
         };
 
         const parts: string[] = [];
-        if (data.status) parts.push(`status: ${data.status}`);
+        parts.push(`id: ${data.id}`);
+        if (data.language) parts.push(`language: ${data.language}`);
+        if (data.duration_ms !== undefined && data.duration_ms !== null) {
+          parts.push(`duration_ms: ${data.duration_ms}`);
+        }
+        if (data.code) parts.push(`code:\n${data.code}`);
         if (data.stdout) parts.push(`stdout:\n${data.stdout}`);
         if (data.stderr) parts.push(`stderr:\n${data.stderr}`);
-        if (data.return_code !== undefined) {
+        if (data.return_code !== undefined && data.return_code !== null) {
           parts.push(`return_code: ${data.return_code}`);
         }
+        if (data.files_count !== undefined) {
+          parts.push(`files_count: ${data.files_count}`);
+        }
+        if (data.error) parts.push(`error: ${data.error}`);
+        if (data.created_at) parts.push(`created_at: ${data.created_at}`);
 
         return {
           content: [{ type: "text" as const, text: truncate(parts.join("\n\n")) }],

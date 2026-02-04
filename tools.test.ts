@@ -448,6 +448,25 @@ describe("createTools", () => {
       expect(body.env_vars).toEqual({ FOO: "bar" });
     });
 
+    it("includes file_ids when provided", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ stdout: "", stderr: "", return_code: 0 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const exec = tools.find((t) => t.name === "sandbox_execute")!;
+      await exec.execute("id", {
+        language: "python",
+        code: "import os; print(os.listdir('/workspace'))",
+        file_ids: ["f-abc123", "f-def456"],
+      });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.file_ids).toEqual(["f-abc123", "f-def456"]);
+    });
+
     it("returns structured result with stdout, stderr, return_code", async () => {
       vi.stubEnv("SANDBOX_API_KEY", "key");
       const fetchMock = vi.fn().mockResolvedValue(
@@ -1466,11 +1485,21 @@ describe("createTools", () => {
     it("gets execution details successfully", async () => {
       vi.stubEnv("SANDBOX_API_KEY", "key");
       const executionData = {
-        execution_id: "exec-uuid-123",
-        status: "completed",
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        endpoint: "/v1/execute",
+        method: "POST",
+        status_code: 200,
+        duration_ms: 1234.56,
+        session_id: "sess-abc123",
+        language: "python",
+        code: "print('hello')",
         stdout: "Hello, World!\n",
         stderr: "",
         return_code: 0,
+        files_count: 0,
+        error: null,
+        request_meta: { has_env_vars: false, files: [] },
+        created_at: "2025-06-01T12:00:00Z",
       };
       const fetchMock = vi.fn().mockResolvedValue(
         mockFetchResponse(executionData),
@@ -1479,23 +1508,28 @@ describe("createTools", () => {
 
       const tools = createTools({});
       const get = tools.find((t) => t.name === "sandbox_get_execution")!;
-      const result = await get.execute("id", { execution_id: "exec-uuid-123" });
+      const result = await get.execute("id", { execution_id: "550e8400-e29b-41d4-a716-446655440000" });
 
       expect(fetchMock.mock.calls[0][0]).toBe(
-        "https://api.agentsandbox.co/v1/executions/exec-uuid-123",
+        "https://api.agentsandbox.co/v1/executions/550e8400-e29b-41d4-a716-446655440000",
       );
       expect(fetchMock.mock.calls[0][1].method).toBe("GET");
       expect(result.details.ok).toBe(true);
-      expect(result.details.execution_id).toBe("exec-uuid-123");
-      expect(result.details.status).toBe("completed");
+      expect(result.details.execution_id).toBe("550e8400-e29b-41d4-a716-446655440000");
+      expect(result.details.id).toBe("550e8400-e29b-41d4-a716-446655440000");
+      expect(result.details.language).toBe("python");
+      expect(result.content[0].text).toContain("id: 550e8400-e29b-41d4-a716-446655440000");
+      expect(result.content[0].text).toContain("language: python");
       expect(result.content[0].text).toContain("stdout:\nHello, World!\n");
       expect(result.content[0].text).toContain("return_code: 0");
+      expect(result.content[0].text).toContain("files_count: 0");
+      expect(result.content[0].text).toContain("created_at: 2025-06-01T12:00:00Z");
     });
 
     it("encodes execution_id in URL", async () => {
       vi.stubEnv("SANDBOX_API_KEY", "key");
       const fetchMock = vi.fn().mockResolvedValue(
-        mockFetchResponse({ execution_id: "e/1", status: "completed" }),
+        mockFetchResponse({ id: "e/1", language: "python" }),
       );
       vi.stubGlobal("fetch", fetchMock);
 
@@ -1513,8 +1547,8 @@ describe("createTools", () => {
       const longOutput = "x".repeat(60_000);
       const fetchMock = vi.fn().mockResolvedValue(
         mockFetchResponse({
-          execution_id: "exec-1",
-          status: "completed",
+          id: "exec-1",
+          language: "python",
           stdout: longOutput,
           return_code: 0,
         }),
@@ -1565,12 +1599,12 @@ describe("createTools", () => {
       ).rejects.toThrow("(403)");
     });
 
-    it("handles execution with only status (no stdout/stderr)", async () => {
+    it("handles execution with minimal fields", async () => {
       vi.stubEnv("SANDBOX_API_KEY", "key");
       const fetchMock = vi.fn().mockResolvedValue(
         mockFetchResponse({
-          execution_id: "exec-pending",
-          status: "running",
+          id: "exec-pending",
+          language: "python",
         }),
       );
       vi.stubGlobal("fetch", fetchMock);
@@ -1580,8 +1614,50 @@ describe("createTools", () => {
       const result = await get.execute("id", { execution_id: "exec-pending" });
 
       expect(result.details.ok).toBe(true);
-      expect(result.details.status).toBe("running");
-      expect(result.content[0].text).toBe("status: running");
+      expect(result.details.id).toBe("exec-pending");
+      expect(result.content[0].text).toContain("id: exec-pending");
+      expect(result.content[0].text).toContain("language: python");
+    });
+
+    it("includes error field when present", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({
+          id: "exec-error",
+          language: "python",
+          code: "raise Exception('test')",
+          return_code: 1,
+          error: "Execution failed",
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      const result = await get.execute("id", { execution_id: "exec-error" });
+
+      expect(result.content[0].text).toContain("error: Execution failed");
+      expect(result.details.error).toBe("Execution failed");
+    });
+
+    it("includes code in output", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({
+          id: "exec-with-code",
+          language: "python",
+          code: "print('hello world')",
+          stdout: "hello world\n",
+          return_code: 0,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      const result = await get.execute("id", { execution_id: "exec-with-code" });
+
+      expect(result.content[0].text).toContain("code:\nprint('hello world')");
     });
   });
 });
