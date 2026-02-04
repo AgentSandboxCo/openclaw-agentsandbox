@@ -126,6 +126,49 @@ function truncate(text: string): string {
   );
 }
 
+async function apiUploadFile(
+  endpoint: string,
+  token: string,
+  fileData: string, // base64 encoded
+  filename: string,
+): Promise<unknown> {
+  // Validate base64 format
+  const base64Regex = /^[A-Za-z0-9+/]*={0,2}$/;
+  if (!base64Regex.test(fileData)) {
+    throw new Error("Invalid base64 encoding in file_data");
+  }
+
+  const buffer = Buffer.from(fileData, "base64");
+  const blob = new Blob([buffer]);
+
+  const formData = new FormData();
+  formData.append("file", blob, filename);
+
+  const res = await fetch(`${BASE_URL}${endpoint}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      // Do NOT set Content-Type — fetch sets it with boundary automatically
+    },
+    body: formData,
+  });
+
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`API POST ${endpoint} failed (${res.status}): ${errText}`);
+  }
+
+  // Handle empty responses (e.g. 204 No Content)
+  if (res.status === 204) return {};
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const text = await res.text();
+    return text ? JSON.parse(text) : {};
+  }
+  return res.text();
+}
+
 export function createTools(ctx: ToolCtx) {
   return [
     // ── sandbox_execute ──────────────────────────────────────────
@@ -328,6 +371,221 @@ export function createTools(ctx: ToolCtx) {
         return {
           content: [{ type: "text" as const, text: truncate(text) }],
           details: { ok: true, file_id: params.file_id },
+        };
+      },
+    },
+
+    // ── sandbox_get_session ─────────────────────────────────────
+    {
+      name: "sandbox_get_session",
+      label: "Get Sandbox Session",
+      description:
+        "Get details of a specific sandbox session by its ID.",
+      parameters: Type.Object({
+        session_id: Type.String({
+          description: "ID of the session to retrieve",
+        }),
+      }),
+      async execute(_id: string, params: { session_id: string }) {
+        const token = await getToken(ctx);
+        const data = await apiRequest(
+          "GET",
+          `/v1/sessions/${encodeURIComponent(params.session_id)}`,
+          token,
+        );
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(data, null, 2) },
+          ],
+          details: { ok: true, session_id: params.session_id, ...(data as object) },
+        };
+      },
+    },
+
+    // ── sandbox_list_files ──────────────────────────────────────
+    {
+      name: "sandbox_list_files",
+      label: "List Sandbox Files",
+      description:
+        "List files owned by the authenticated user.",
+      parameters: Type.Object({
+        limit: Type.Optional(
+          Type.Number({
+            description: "Maximum number of files to return (1-100, default 50)",
+            minimum: 1,
+            maximum: 100,
+          }),
+        ),
+        offset: Type.Optional(
+          Type.Number({
+            description: "Number of files to skip (default 0)",
+            minimum: 0,
+          }),
+        ),
+      }),
+      async execute(
+        _id: string,
+        params: { limit?: number; offset?: number },
+      ) {
+        const token = await getToken(ctx);
+        const queryParams = new URLSearchParams();
+        if (params.limit !== undefined) {
+          queryParams.set("limit", String(params.limit));
+        }
+        if (params.offset !== undefined) {
+          queryParams.set("offset", String(params.offset));
+        }
+        const queryString = queryParams.toString();
+        const endpoint = `/v1/files${queryString ? `?${queryString}` : ""}`;
+
+        const data = await apiRequest("GET", endpoint, token);
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(data, null, 2) },
+          ],
+          details: { ok: true, ...(data as object) },
+        };
+      },
+    },
+
+    // ── sandbox_upload_file ─────────────────────────────────────
+    {
+      name: "sandbox_upload_file",
+      label: "Upload File to Sandbox",
+      description:
+        "Upload a file to the sandbox. Optionally inject it into a specific session.",
+      parameters: Type.Object({
+        file_data: Type.String({
+          description: "Base64-encoded file content",
+        }),
+        filename: Type.String({
+          description: "Name of the file to upload",
+        }),
+        session_id: Type.Optional(
+          Type.String({
+            description: "Session ID to inject the file into",
+          }),
+        ),
+      }),
+      async execute(
+        _id: string,
+        params: { file_data: string; filename: string; session_id?: string },
+      ) {
+        const token = await getToken(ctx);
+        const queryParams = new URLSearchParams();
+        if (params.session_id) {
+          queryParams.set("session_id", params.session_id);
+        }
+        const queryString = queryParams.toString();
+        const endpoint = `/v1/files${queryString ? `?${queryString}` : ""}`;
+
+        const data = await apiUploadFile(
+          endpoint,
+          token,
+          params.file_data,
+          params.filename,
+        );
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(data, null, 2) },
+          ],
+          details: { ok: true, filename: params.filename, ...(data as object) },
+        };
+      },
+    },
+
+    // ── sandbox_delete_file ─────────────────────────────────────
+    {
+      name: "sandbox_delete_file",
+      label: "Delete Sandbox File",
+      description:
+        "Delete a file from the sandbox by its ID.",
+      parameters: Type.Object({
+        file_id: Type.String({
+          description: "ID of the file to delete",
+        }),
+      }),
+      async execute(_id: string, params: { file_id: string }) {
+        const token = await getToken(ctx);
+        const endpoint = `/v1/files/${encodeURIComponent(params.file_id)}`;
+        const maxAttempts = 3;
+        let lastError: Error | undefined;
+
+        for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+          try {
+            const data = await apiRequest("DELETE", endpoint, token);
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify(data, null, 2) },
+              ],
+              details: { ok: true, file_id: params.file_id, ...(data as object) },
+            };
+          } catch (err) {
+            lastError = err instanceof Error ? err : new Error(String(err));
+
+            // 404 means the file is already gone — treat as success
+            if (lastError.message.includes("(404)")) {
+              return {
+                content: [
+                  { type: "text" as const, text: "File deleted (already absent)." },
+                ],
+                details: { ok: true, file_id: params.file_id, already_gone: true },
+              };
+            }
+
+            // Only retry on transient errors (5xx, 429, network/parse issues)
+            const statusMatch = lastError.message.match(/\((\d{3})\)/);
+            const status = statusMatch ? parseInt(statusMatch[1], 10) : 0;
+            const isRetryable = status >= 500 || status === 429 || !statusMatch;
+            if (!isRetryable || attempt === maxAttempts) throw lastError;
+
+            await new Promise((r) => setTimeout(r, 500 * 2 ** (attempt - 1)));
+          }
+        }
+        throw lastError;
+      },
+    },
+
+    // ── sandbox_get_execution ───────────────────────────────────
+    {
+      name: "sandbox_get_execution",
+      label: "Get Execution Details",
+      description:
+        "Get details of a specific code execution including the code that was run and its output.",
+      parameters: Type.Object({
+        execution_id: Type.String({
+          description: "UUID of the execution to retrieve",
+        }),
+      }),
+      async execute(_id: string, params: { execution_id: string }) {
+        const token = await getToken(ctx);
+        const data = (await apiRequest(
+          "GET",
+          `/v1/executions/${encodeURIComponent(params.execution_id)}`,
+          token,
+        )) as {
+          execution_id?: string;
+          stdout?: string;
+          stderr?: string;
+          return_code?: number;
+          status?: string;
+        };
+
+        const parts: string[] = [];
+        if (data.status) parts.push(`status: ${data.status}`);
+        if (data.stdout) parts.push(`stdout:\n${data.stdout}`);
+        if (data.stderr) parts.push(`stderr:\n${data.stderr}`);
+        if (data.return_code !== undefined) {
+          parts.push(`return_code: ${data.return_code}`);
+        }
+
+        return {
+          content: [{ type: "text" as const, text: truncate(parts.join("\n\n")) }],
+          details: {
+            ok: true,
+            execution_id: params.execution_id,
+            ...data,
+          },
         };
       },
     },

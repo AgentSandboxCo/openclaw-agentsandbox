@@ -95,16 +95,23 @@ describe("createTools", () => {
     vi.unstubAllGlobals();
   });
 
-  it("returns all 5 tools with correct names", () => {
+  it("returns all 10 tools with correct names", () => {
     const tools = createTools({});
     const names = tools.map((t) => t.name);
-    expect(names).toEqual([
+    const expectedNames = [
       "sandbox_execute",
       "sandbox_create_session",
       "sandbox_list_sessions",
       "sandbox_destroy_session",
       "sandbox_download_file",
-    ]);
+      "sandbox_get_session",
+      "sandbox_list_files",
+      "sandbox_upload_file",
+      "sandbox_delete_file",
+      "sandbox_get_execution",
+    ];
+    expect(names).toHaveLength(expectedNames.length);
+    expect(names).toEqual(expect.arrayContaining(expectedNames));
   });
 
   // ── getToken ────────────────────────────────────────────────────────────
@@ -825,6 +832,633 @@ describe("createTools", () => {
 
       expect(result.content[0].text).toContain("truncated");
       expect(result.content[0].text.length).toBeLessThan(largeContent.length);
+    });
+  });
+
+  // ── sandbox_get_session ────────────────────────────────────────────────
+
+  describe("sandbox_get_session", () => {
+    it("gets session details successfully", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const sessionData = {
+        session_id: "sess-123",
+        status: "active",
+        created_at: "2024-01-01T00:00:00Z",
+      };
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse(sessionData),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_session")!;
+      const result = await get.execute("id", { session_id: "sess-123" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/sessions/sess-123",
+      );
+      expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+      expect(result.details.ok).toBe(true);
+      expect(result.details.session_id).toBe("sess-123");
+      expect(result.details.status).toBe("active");
+    });
+
+    it("encodes session_id in URL", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ session_id: "s/1", status: "active" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_session")!;
+      await get.execute("id", { session_id: "s/1" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/sessions/s%2F1",
+      );
+    });
+
+    it("throws on 404 not found", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Not Found"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_session")!;
+
+      await expect(
+        get.execute("id", { session_id: "nonexistent" }),
+      ).rejects.toThrow("(404)");
+    });
+
+    it("throws on 401 unauthorized", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Unauthorized"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_session")!;
+
+      await expect(
+        get.execute("id", { session_id: "sess-123" }),
+      ).rejects.toThrow("(401)");
+    });
+  });
+
+  // ── sandbox_list_files ─────────────────────────────────────────────────
+
+  describe("sandbox_list_files", () => {
+    it("lists files with default parameters", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const filesData = {
+        files: [
+          { file_id: "f1", filename: "test.txt" },
+          { file_id: "f2", filename: "data.csv" },
+        ],
+        total: 2,
+      };
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse(filesData),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const list = tools.find((t) => t.name === "sandbox_list_files")!;
+      const result = await list.execute("id", {});
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/files",
+      );
+      expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+      expect(result.details.ok).toBe(true);
+    });
+
+    it("passes limit and offset as query parameters in correct order", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ files: [], total: 0 }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const list = tools.find((t) => t.name === "sandbox_list_files")!;
+      await list.execute("id", { limit: 25, offset: 50 });
+
+      const url = fetchMock.mock.calls[0][0];
+      // URLSearchParams maintains insertion order: limit first, then offset
+      expect(url).toBe("https://api.agentsandbox.co/v1/files?limit=25&offset=50");
+    });
+
+    it("passes only limit when offset not provided", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ files: [] }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const list = tools.find((t) => t.name === "sandbox_list_files")!;
+      await list.execute("id", { limit: 10 });
+
+      const url = fetchMock.mock.calls[0][0];
+      expect(url).toBe("https://api.agentsandbox.co/v1/files?limit=10");
+    });
+
+    it("throws on 403 forbidden", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Forbidden"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const list = tools.find((t) => t.name === "sandbox_list_files")!;
+
+      await expect(list.execute("id", {})).rejects.toThrow("(403)");
+    });
+  });
+
+  // ── sandbox_upload_file ────────────────────────────────────────────────
+
+  describe("sandbox_upload_file", () => {
+    it("uploads file without session_id", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const uploadResponse = { file_id: "uploaded-f1", filename: "test.txt" };
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse(uploadResponse),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+      // "hello" in base64
+      const result = await upload.execute("id", {
+        file_data: "aGVsbG8=",
+        filename: "test.txt",
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/files",
+      );
+      expect(fetchMock.mock.calls[0][1].method).toBe("POST");
+      expect(result.details.ok).toBe(true);
+      expect(result.details.file_id).toBe("uploaded-f1");
+      expect(result.details.filename).toBe("test.txt");
+    });
+
+    it("uploads file with session_id query param", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ file_id: "f2", filename: "data.csv" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+      await upload.execute("id", {
+        file_data: "ZGF0YQ==",
+        filename: "data.csv",
+        session_id: "sess-abc",
+      });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/files?session_id=sess-abc",
+      );
+    });
+
+    it("sends FormData with file blob", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ file_id: "f3" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+      await upload.execute("id", {
+        file_data: "dGVzdA==", // "test" in base64
+        filename: "test.bin",
+      });
+
+      const [, init] = fetchMock.mock.calls[0];
+      expect(init.body).toBeInstanceOf(FormData);
+      // Don't set Content-Type — fetch handles it with boundary
+      expect(init.headers["Content-Type"]).toBeUndefined();
+    });
+
+    it("correctly decodes base64 file data", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ file_id: "f4" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+      // "Hello, World!" in base64
+      await upload.execute("id", {
+        file_data: "SGVsbG8sIFdvcmxkIQ==",
+        filename: "hello.txt",
+      });
+
+      const [, init] = fetchMock.mock.calls[0];
+      const formData = init.body as FormData;
+      const file = formData.get("file") as Blob;
+
+      expect(file).toBeInstanceOf(Blob);
+      const content = await file.text();
+      expect(content).toBe("Hello, World!");
+    });
+
+    it("correctly decodes binary base64 data", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ file_id: "f5" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+      // Binary data: bytes 0x00, 0x01, 0x02, 0xFF in base64
+      await upload.execute("id", {
+        file_data: "AAEC/w==",
+        filename: "binary.bin",
+      });
+
+      const [, init] = fetchMock.mock.calls[0];
+      const formData = init.body as FormData;
+      const file = formData.get("file") as Blob;
+
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      expect(Array.from(bytes)).toEqual([0x00, 0x01, 0x02, 0xff]);
+    });
+
+    it("throws on 500 server error", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 500,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Internal Server Error"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+
+      await expect(
+        upload.execute("id", { file_data: "YWJj", filename: "test.txt" }),
+      ).rejects.toThrow("(500)");
+    });
+
+    it("throws on invalid base64 data", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+
+      await expect(
+        upload.execute("id", { file_data: "not valid base64!!!", filename: "test.txt" }),
+      ).rejects.toThrow("Invalid base64 encoding");
+    });
+
+    it("throws on base64 with invalid characters", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+
+      const tools = createTools({});
+      const upload = tools.find((t) => t.name === "sandbox_upload_file")!;
+
+      await expect(
+        upload.execute("id", { file_data: "abc$def", filename: "test.txt" }),
+      ).rejects.toThrow("Invalid base64 encoding");
+    });
+  });
+
+  // ── sandbox_delete_file ────────────────────────────────────────────────
+
+  describe("sandbox_delete_file", () => {
+    it("deletes file successfully", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ status: "deleted" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+      const result = await del.execute("id", { file_id: "f123" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/files/f123",
+      );
+      expect(fetchMock.mock.calls[0][1].method).toBe("DELETE");
+      expect(result.details.ok).toBe(true);
+      expect(result.details.file_id).toBe("f123");
+    });
+
+    it("encodes file_id in URL", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ status: "deleted" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+      await del.execute("id", { file_id: "file/with spaces" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/files/file%2Fwith%20spaces",
+      );
+    });
+
+    it("treats 404 as success (file already gone)", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Not Found"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+      const result = await del.execute("id", { file_id: "gone" });
+
+      expect(result.details.ok).toBe(true);
+      expect(result.details.already_gone).toBe(true);
+      expect(result.content[0].text).toContain("already absent");
+    });
+
+    it("throws on 401 unauthorized", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 401,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Unauthorized"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+
+      await expect(
+        del.execute("id", { file_id: "f123" }),
+      ).rejects.toThrow("(401)");
+    });
+
+    it("throws on 403 forbidden", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Forbidden"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+
+      await expect(
+        del.execute("id", { file_id: "f123" }),
+      ).rejects.toThrow("(403)");
+    });
+
+    it("retries on 500 errors with exponential backoff", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+
+      let callCount = 0;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount < 3) {
+          return Promise.resolve({
+            ok: false,
+            status: 500,
+            headers: new Headers({ "content-type": "text/plain" }),
+            text: vi.fn().mockResolvedValue("Server Error"),
+          });
+        }
+        return Promise.resolve(
+          mockFetchResponse({ status: "deleted" }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+      const result = await del.execute("id", { file_id: "f123" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      expect(result.details.ok).toBe(true);
+    });
+
+    it("retries on 429 rate limit", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+
+      let callCount = 0;
+      const fetchMock = vi.fn().mockImplementation(() => {
+        callCount++;
+        if (callCount === 1) {
+          return Promise.resolve({
+            ok: false,
+            status: 429,
+            headers: new Headers({ "content-type": "text/plain" }),
+            text: vi.fn().mockResolvedValue("Rate limited"),
+          });
+        }
+        return Promise.resolve(
+          mockFetchResponse({ status: "deleted" }),
+        );
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+      const result = await del.execute("id", { file_id: "f123" });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(result.details.ok).toBe(true);
+    });
+
+    it("does not retry on 400 client error", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 400,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Bad Request"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+
+      await expect(
+        del.execute("id", { file_id: "f123" }),
+      ).rejects.toThrow("(400)");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("throws after max retries exhausted", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 502,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Bad Gateway"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const del = tools.find((t) => t.name === "sandbox_delete_file")!;
+
+      await expect(
+        del.execute("id", { file_id: "f123" }),
+      ).rejects.toThrow("(502)");
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  // ── sandbox_get_execution ──────────────────────────────────────────────
+
+  describe("sandbox_get_execution", () => {
+    it("gets execution details successfully", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const executionData = {
+        execution_id: "exec-uuid-123",
+        status: "completed",
+        stdout: "Hello, World!\n",
+        stderr: "",
+        return_code: 0,
+      };
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse(executionData),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      const result = await get.execute("id", { execution_id: "exec-uuid-123" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/executions/exec-uuid-123",
+      );
+      expect(fetchMock.mock.calls[0][1].method).toBe("GET");
+      expect(result.details.ok).toBe(true);
+      expect(result.details.execution_id).toBe("exec-uuid-123");
+      expect(result.details.status).toBe("completed");
+      expect(result.content[0].text).toContain("stdout:\nHello, World!\n");
+      expect(result.content[0].text).toContain("return_code: 0");
+    });
+
+    it("encodes execution_id in URL", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ execution_id: "e/1", status: "completed" }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      await get.execute("id", { execution_id: "e/1" });
+
+      expect(fetchMock.mock.calls[0][0]).toBe(
+        "https://api.agentsandbox.co/v1/executions/e%2F1",
+      );
+    });
+
+    it("truncates long stdout/stderr", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const longOutput = "x".repeat(60_000);
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({
+          execution_id: "exec-1",
+          status: "completed",
+          stdout: longOutput,
+          return_code: 0,
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      const result = await get.execute("id", { execution_id: "exec-1" });
+
+      expect(result.content[0].text).toContain("truncated");
+      expect(result.content[0].text.length).toBeLessThan(longOutput.length);
+    });
+
+    it("throws on 404 not found", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Not Found"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+
+      await expect(
+        get.execute("id", { execution_id: "nonexistent" }),
+      ).rejects.toThrow("(404)");
+    });
+
+    it("throws on 403 forbidden (belongs to different user)", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: new Headers({ "content-type": "text/plain" }),
+        text: vi.fn().mockResolvedValue("Forbidden"),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+
+      await expect(
+        get.execute("id", { execution_id: "exec-1" }),
+      ).rejects.toThrow("(403)");
+    });
+
+    it("handles execution with only status (no stdout/stderr)", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({
+          execution_id: "exec-pending",
+          status: "running",
+        }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const get = tools.find((t) => t.name === "sandbox_get_execution")!;
+      const result = await get.execute("id", { execution_id: "exec-pending" });
+
+      expect(result.details.ok).toBe(true);
+      expect(result.details.status).toBe("running");
+      expect(result.content[0].text).toBe("status: running");
     });
   });
 });

@@ -131,6 +131,11 @@ const plugin: any = {
         "sandbox_list_sessions",
         "sandbox_destroy_session",
         "sandbox_download_file",
+        "sandbox_get_session",
+        "sandbox_list_files",
+        "sandbox_upload_file",
+        "sandbox_delete_file",
+        "sandbox_get_execution",
       ],
     });
   },
