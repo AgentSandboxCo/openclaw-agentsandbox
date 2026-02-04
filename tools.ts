@@ -176,29 +176,33 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_execute",
       label: "Execute Code in Sandbox",
       description:
-        "Execute Python or Bash code in a sandboxed environment. Returns stdout, stderr, return code, and any output files.",
+        "Execute Python or Bash code in a sandboxed environment. Returns stdout, stderr, return code, and any output files.\n\n" +
+        "IMPORTANT: To save output files that are returned in the response, write them to the `/output` directory (e.g., `/output/result.png`). Files written elsewhere will not be captured.\n\n" +
+        "If `file_ids` is provided, those files are copied to `/workspace` before execution and accessible at `/workspace/{filename}`.\n\n" +
+        "Use `session_id` to run code in a persistent session where installed packages and filesystem changes persist across calls. Omit for stateless one-shot execution.\n\n" +
+        "Common packages (numpy, pandas, matplotlib, requests, PIL, etc.) are pre-installed. Install additional packages with pip in your code.",
       parameters: Type.Object({
         language: Type.Unsafe<"python" | "bash">({
           type: "string",
           enum: ["python", "bash"],
-          description: "Language to execute",
+          description: "Language to execute: 'python' for Python 3 code, 'bash' for shell commands",
         }),
-        code: Type.String({ description: "Code to run" }),
+        code: Type.String({ description: "The code to execute. For Python, this is run as a script. For Bash, commands are executed in a shell." }),
         session_id: Type.Optional(
           Type.String({
             description:
-              "Reuse a persistent session. Omit for a one-shot sandbox.",
+              "ID of a persistent session to run in (from sandbox_create_session). When provided, installed packages and filesystem changes persist. Omit for a one-shot sandbox that is destroyed after execution.",
           }),
         ),
         env_vars: Type.Optional(
           Type.Unsafe<Record<string, string>>({
             type: "object",
-            description: "Environment variables to inject",
+            description: "Environment variables to inject into the execution environment as key-value pairs (e.g., {\"API_KEY\": \"secret\"})",
           }),
         ),
         file_ids: Type.Optional(
           Type.Array(Type.String(), {
-            description: "List of file IDs to inject into /workspace before execution",
+            description: "List of file IDs (from sandbox_upload_file or previous executions) to copy into /workspace before execution",
           }),
         ),
       }),
@@ -258,17 +262,23 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_create_session",
       label: "Create Sandbox Session",
       description:
-        "Create a persistent sandbox session. Use the returned session_id with sandbox_execute to preserve filesystem state and installed packages across executions. Optionally pre-populate with existing files.",
+        "Create a persistent sandbox session. Use the returned session_id with sandbox_execute to preserve filesystem state and installed packages across executions.\n\n" +
+        "Use sessions when you need to:\n" +
+        "- Install packages once and run multiple scripts\n" +
+        "- Build up state across multiple code executions\n" +
+        "- Preserve files between runs\n\n" +
+        "Sessions remain active until explicitly destroyed with sandbox_destroy_session. Destroy sessions when done to free resources.\n\n" +
+        "For simple one-off executions, skip this and use sandbox_execute without a session_id instead.",
       parameters: Type.Object({
         env_vars: Type.Optional(
           Type.Unsafe<Record<string, string>>({
             type: "object",
-            description: "Environment variables to inject into the session",
+            description: "Environment variables to inject into the session, available to all executions in this session (e.g., {\"API_KEY\": \"secret\"})",
           }),
         ),
         file_ids: Type.Optional(
           Type.Array(Type.String(), {
-            description: "List of file IDs to inject into the session's /workspace directory on creation",
+            description: "List of file IDs (from sandbox_upload_file) to copy into the session's /workspace directory when created",
           }),
         ),
       }),
@@ -295,7 +305,9 @@ export function createTools(ctx: ToolCtx) {
     {
       name: "sandbox_list_sessions",
       label: "List Sandbox Sessions",
-      description: "List all active sandbox sessions.",
+      description:
+        "List all active sandbox sessions owned by the authenticated user. Returns an array of session IDs.\n\n" +
+        "Use this to find existing sessions you can reuse, or to check which sessions need to be cleaned up with sandbox_destroy_session.",
       parameters: Type.Object({}),
       async execute() {
         const token = await getToken(ctx);
@@ -314,10 +326,11 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_destroy_session",
       label: "Destroy Sandbox Session",
       description:
-        "Destroy a sandbox session and terminate its sandbox. The session_id will no longer be usable.",
+        "Destroy a sandbox session and terminate its underlying sandbox. The session_id will no longer be usable after this call.\n\n" +
+        "Always destroy sessions when you're done with them to free resources. Any files written within the session (not to /output) will be lost.",
       parameters: Type.Object({
         session_id: Type.String({
-          description: "ID of the session to destroy",
+          description: "ID of the session to destroy (from sandbox_create_session or sandbox_list_sessions)",
         }),
       }),
       async execute(_id: string, params: { session_id: string }) {
@@ -366,13 +379,15 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_inject_files",
       label: "Inject Files into Session",
       description:
-        "Inject existing files into a running session's /workspace directory. Files must already be uploaded via sandbox_upload_file.",
+        "Copy previously uploaded files into a running session's /workspace directory. Files become accessible at `/workspace/{original_filename}` after injection.\n\n" +
+        "Use this to add files to an existing session after it was created. For new sessions, prefer passing `file_ids` to sandbox_create_session instead.\n\n" +
+        "Files must first be uploaded via sandbox_upload_file to get their file_ids.",
       parameters: Type.Object({
         session_id: Type.String({
-          description: "ID of the session to inject files into",
+          description: "ID of the running session to inject files into (from sandbox_create_session)",
         }),
         file_ids: Type.Array(Type.String(), {
-          description: "List of file IDs to inject (minimum 1)",
+          description: "List of file IDs to inject (from sandbox_upload_file or previous execution outputs). At least one file_id is required.",
           minItems: 1,
         }),
       }),
@@ -399,10 +414,14 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_download_file",
       label: "Download Sandbox File",
       description:
-        "Download an output file produced by a sandbox execution. Use the file_id from the sandbox_execute response.",
+        "Download the content of a file by its file_id. Returns the raw file content.\n\n" +
+        "Use this to retrieve:\n" +
+        "- Output files from sandbox_execute (files written to /output directory)\n" +
+        "- Files uploaded via sandbox_upload_file\n\n" +
+        "For text files, returns the text content directly. For binary files (images, etc.), returns the raw bytes. Large files may be truncated.",
       parameters: Type.Object({
         file_id: Type.String({
-          description: "ID of the file to download",
+          description: "ID of the file to download (from sandbox_execute response or sandbox_upload_file)",
         }),
       }),
       async execute(_id: string, params: { file_id: string }) {
@@ -426,10 +445,11 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_get_session",
       label: "Get Sandbox Session",
       description:
-        "Get details of a specific sandbox session by its ID.",
+        "Check if a specific sandbox session exists and is still active. Returns session details if found.\n\n" +
+        "Use this to verify a session is still running before executing code in it.",
       parameters: Type.Object({
         session_id: Type.String({
-          description: "ID of the session to retrieve",
+          description: "ID of the session to check (from sandbox_create_session or sandbox_list_sessions)",
         }),
       }),
       async execute(_id: string, params: { session_id: string }) {
@@ -453,18 +473,19 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_list_files",
       label: "List Sandbox Files",
       description:
-        "List files owned by the authenticated user.",
+        "List all files owned by the authenticated user. Includes both uploaded files (via sandbox_upload_file) and output files from sandbox executions.\n\n" +
+        "Results are paginated. Each file entry includes file_id, filename, mime_type, size_bytes, and created_at timestamp.",
       parameters: Type.Object({
         limit: Type.Optional(
           Type.Number({
-            description: "Maximum number of files to return (1-100, default 50)",
+            description: "Maximum number of files to return per page (1-100, default 50)",
             minimum: 1,
             maximum: 100,
           }),
         ),
         offset: Type.Optional(
           Type.Number({
-            description: "Number of files to skip (default 0)",
+            description: "Number of files to skip for pagination (default 0). Use with limit to page through results.",
             minimum: 0,
           }),
         ),
@@ -499,17 +520,19 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_upload_file",
       label: "Upload File to Sandbox",
       description:
-        "Upload a file to the sandbox. Optionally inject it into a specific session.",
+        "Upload a file to cloud storage. Returns a file_id that can be used to inject the file into sandbox sessions.\n\n" +
+        "To use this file in sandbox_execute, pass the returned file_id in the `file_ids` array parameter.\n\n" +
+        "If `session_id` is provided, the file is also immediately copied to that session's /workspace directory.",
       parameters: Type.Object({
         file_data: Type.String({
-          description: "Base64-encoded file content",
+          description: "Base64-encoded file content. Must be valid base64 with proper padding (=). For text files, encode the UTF-8 bytes. No line breaks in the base64 string.",
         }),
         filename: Type.String({
-          description: "Name of the file to upload",
+          description: "Name for the file (e.g., 'data.csv', 'script.py'). This name is used when the file is injected into /workspace.",
         }),
         session_id: Type.Optional(
           Type.String({
-            description: "Session ID to inject the file into",
+            description: "If provided, immediately inject the uploaded file into this session's /workspace directory in addition to storing it",
           }),
         ),
       }),
@@ -545,10 +568,11 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_delete_file",
       label: "Delete Sandbox File",
       description:
-        "Delete a file from the sandbox by its ID.",
+        "Permanently delete a file from cloud storage by its file_id. This removes both the stored file and its metadata.\n\n" +
+        "Note: This does not remove copies of the file that were already injected into session /workspace directories.",
       parameters: Type.Object({
         file_id: Type.String({
-          description: "ID of the file to delete",
+          description: "ID of the file to delete (from sandbox_upload_file or sandbox_execute output)",
         }),
       }),
       async execute(_id: string, params: { file_id: string }) {
@@ -597,10 +621,11 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_get_execution",
       label: "Get Execution Details",
       description:
-        "Get details of a specific code execution including the code that was run and its output.",
+        "Retrieve a detailed log of a past code execution, including the original code, stdout, stderr, return code, execution duration, and output file count.\n\n" +
+        "Use this to review or debug previous executions, or to retrieve execution details that may have been lost from context.",
       parameters: Type.Object({
         execution_id: Type.String({
-          description: "UUID of the execution to retrieve",
+          description: "UUID of the execution to retrieve. Execution IDs are returned in execution logs and can be found in the API response metadata.",
         }),
       }),
       async execute(_id: string, params: { execution_id: string }) {
