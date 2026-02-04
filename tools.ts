@@ -251,7 +251,7 @@ export function createTools(ctx: ToolCtx) {
       name: "sandbox_create_session",
       label: "Create Sandbox Session",
       description:
-        "Create a persistent sandbox session. Use the returned session_id with sandbox_execute to preserve filesystem state and installed packages across executions.",
+        "Create a persistent sandbox session. Use the returned session_id with sandbox_execute to preserve filesystem state and installed packages across executions. Optionally pre-populate with existing files.",
       parameters: Type.Object({
         env_vars: Type.Optional(
           Type.Unsafe<Record<string, string>>({
@@ -259,14 +259,20 @@ export function createTools(ctx: ToolCtx) {
             description: "Environment variables to inject into the session",
           }),
         ),
+        file_ids: Type.Optional(
+          Type.Array(Type.String(), {
+            description: "List of file IDs to inject into the session's /workspace directory on creation",
+          }),
+        ),
       }),
       async execute(
         _id: string,
-        params: { env_vars?: Record<string, string> },
+        params: { env_vars?: Record<string, string>; file_ids?: string[] },
       ) {
         const token = await getToken(ctx);
         const body: Record<string, unknown> = {};
         if (params.env_vars) body.env_vars = params.env_vars;
+        if (params.file_ids) body.file_ids = params.file_ids;
 
         const data = await apiRequest("POST", "/v1/sessions", token, body);
         return {
@@ -345,6 +351,39 @@ export function createTools(ctx: ToolCtx) {
           }
         }
         throw lastError;
+      },
+    },
+
+    // ── sandbox_inject_files ────────────────────────────────────
+    {
+      name: "sandbox_inject_files",
+      label: "Inject Files into Session",
+      description:
+        "Inject existing files into a running session's /workspace directory. Files must already be uploaded via sandbox_upload_file.",
+      parameters: Type.Object({
+        session_id: Type.String({
+          description: "ID of the session to inject files into",
+        }),
+        file_ids: Type.Array(Type.String(), {
+          description: "List of file IDs to inject (minimum 1)",
+          minItems: 1,
+        }),
+      }),
+      async execute(
+        _id: string,
+        params: { session_id: string; file_ids: string[] },
+      ) {
+        const token = await getToken(ctx);
+        const endpoint = `/v1/sessions/${encodeURIComponent(params.session_id)}/files`;
+        const body = { file_ids: params.file_ids };
+
+        await apiRequest("POST", endpoint, token, body);
+        return {
+          content: [
+            { type: "text" as const, text: `Injected ${params.file_ids.length} file(s) into session ${params.session_id}` },
+          ],
+          details: { ok: true, session_id: params.session_id, file_ids: params.file_ids },
+        };
       },
     },
 

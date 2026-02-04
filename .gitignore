@@ -7,3 +7,4 @@ auth-profiles.json
 .env*
 .DS_Store
 *.log
+API.md

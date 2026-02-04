@@ -103,6 +103,7 @@ describe("createTools", () => {
       "sandbox_create_session",
       "sandbox_list_sessions",
       "sandbox_destroy_session",
+      "sandbox_inject_files",
       "sandbox_download_file",
       "sandbox_get_session",
       "sandbox_list_files",
@@ -556,6 +557,40 @@ describe("createTools", () => {
       const body = JSON.parse(fetchMock.mock.calls[0][1].body);
       expect(body.env_vars).toEqual({ KEY: "val" });
     });
+
+    it("passes file_ids when provided", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ session_id: "s3", created: true }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const create = tools.find((t) => t.name === "sandbox_create_session")!;
+      await create.execute("id", { file_ids: ["f-abc123", "f-def456"] });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.file_ids).toEqual(["f-abc123", "f-def456"]);
+    });
+
+    it("passes both env_vars and file_ids when provided", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue(
+        mockFetchResponse({ session_id: "s4", created: true }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const create = tools.find((t) => t.name === "sandbox_create_session")!;
+      await create.execute("id", {
+        env_vars: { API_KEY: "secret" },
+        file_ids: ["f-xyz"],
+      });
+
+      const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+      expect(body.env_vars).toEqual({ API_KEY: "secret" });
+      expect(body.file_ids).toEqual(["f-xyz"]);
+    });
   });
 
   // ── sandbox_list_sessions ───────────────────────────────────────────────
@@ -754,6 +789,94 @@ describe("createTools", () => {
         destroy.execute("id", { session_id: "s1" }),
       ).rejects.toThrow("(502)");
       expect(fetchMock).toHaveBeenCalledTimes(3);
+    });
+  });
+
+  // ── sandbox_inject_files ───────────────────────────────────────────────
+
+  describe("sandbox_inject_files", () => {
+    it("injects files into session successfully", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        headers: new Headers(),
+        text: vi.fn().mockResolvedValue(""),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const inject = tools.find((t) => t.name === "sandbox_inject_files")!;
+      const result = await inject.execute("id", {
+        session_id: "sess-123",
+        file_ids: ["f-abc", "f-def"],
+      });
+
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe("https://api.agentsandbox.co/v1/sessions/sess-123/files");
+      expect(init.method).toBe("POST");
+      const body = JSON.parse(init.body);
+      expect(body.file_ids).toEqual(["f-abc", "f-def"]);
+      expect(result.details.ok).toBe(true);
+      expect(result.details.session_id).toBe("sess-123");
+      expect(result.details.file_ids).toEqual(["f-abc", "f-def"]);
+    });
+
+    it("encodes session_id in URL", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        status: 204,
+        headers: new Headers(),
+        text: vi.fn().mockResolvedValue(""),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const inject = tools.find((t) => t.name === "sandbox_inject_files")!;
+      await inject.execute("id", {
+        session_id: "session/with/slashes",
+        file_ids: ["f-1"],
+      });
+
+      const [url] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        "https://api.agentsandbox.co/v1/sessions/session%2Fwith%2Fslashes/files",
+      );
+    });
+
+    it("throws on 404 session not found", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 404,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: vi.fn().mockResolvedValue('{"error": "Session not found"}'),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const inject = tools.find((t) => t.name === "sandbox_inject_files")!;
+      await expect(
+        inject.execute("id", { session_id: "bad-sess", file_ids: ["f-1"] }),
+      ).rejects.toThrow("(404)");
+    });
+
+    it("throws on 403 file access denied", async () => {
+      vi.stubEnv("SANDBOX_API_KEY", "key");
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: false,
+        status: 403,
+        headers: new Headers({ "content-type": "application/json" }),
+        text: vi.fn().mockResolvedValue('{"error": "File belongs to another user"}'),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const tools = createTools({});
+      const inject = tools.find((t) => t.name === "sandbox_inject_files")!;
+      await expect(
+        inject.execute("id", { session_id: "sess-1", file_ids: ["f-other-user"] }),
+      ).rejects.toThrow("(403)");
     });
   });
 

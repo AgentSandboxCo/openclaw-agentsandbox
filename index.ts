@@ -130,6 +130,7 @@ const plugin: any = {
         "sandbox_create_session",
         "sandbox_list_sessions",
         "sandbox_destroy_session",
+        "sandbox_inject_files",
         "sandbox_download_file",
         "sandbox_get_session",
         "sandbox_list_files",
